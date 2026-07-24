@@ -31,20 +31,28 @@ final class GrpcNettyMaxConcurrentStreamsLimiter {
   private GrpcNettyMaxConcurrentStreamsLimiter() {
   }
 
-  static void configure(NettyServerBuilder builder, int maxConcurrentStreams) {
+  static NettyServerBuilder configurePlaintext(
+      NettyServerBuilder builder, int maxConcurrentStreams) {
     checkNotNull(builder, "builder");
     checkArgument(maxConcurrentStreams > 0, "maxConcurrentStreams must be positive");
-    builder.protocolNegotiator(new EnforcingProtocolNegotiator(
-        InternalProtocolNegotiators.serverPlaintext(), maxConcurrentStreams));
+    builder.maxConcurrentCallsPerConnection(maxConcurrentStreams);
+    return builder.protocolNegotiator(newPlaintextNegotiator(maxConcurrentStreams));
   }
 
-  static final class EnforcingProtocolNegotiator
+  static InternalProtocolNegotiator.ProtocolNegotiator newPlaintextNegotiator(
+      int maxConcurrentStreams) {
+    checkArgument(maxConcurrentStreams > 0, "maxConcurrentStreams must be positive");
+    return new EnforcingProtocolNegotiator(
+        InternalProtocolNegotiators.serverPlaintext(), maxConcurrentStreams);
+  }
+
+  private static final class EnforcingProtocolNegotiator
       implements InternalProtocolNegotiator.ProtocolNegotiator {
 
     private final InternalProtocolNegotiator.ProtocolNegotiator delegate;
     private final int maxConcurrentStreams;
 
-    EnforcingProtocolNegotiator(
+    private EnforcingProtocolNegotiator(
         InternalProtocolNegotiator.ProtocolNegotiator delegate, int maxConcurrentStreams) {
       this.delegate = checkNotNull(delegate, "delegate");
       this.maxConcurrentStreams = maxConcurrentStreams;

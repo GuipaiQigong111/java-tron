@@ -16,47 +16,91 @@
 package org.tron.common.application;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
-import static org.junit.Assert.assertSame;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThrows;
 
+import io.grpc.ChannelLogger;
+import io.grpc.ChannelLogger.ChannelLogLevel;
 import io.grpc.netty.GrpcHttp2ConnectionHandler;
 import io.grpc.netty.InternalProtocolNegotiator;
 import io.netty.channel.ChannelHandler;
 import io.netty.handler.codec.http2.DefaultHttp2Connection;
+import io.netty.handler.codec.http2.DefaultHttp2ConnectionDecoder;
+import io.netty.handler.codec.http2.DefaultHttp2ConnectionEncoder;
+import io.netty.handler.codec.http2.DefaultHttp2FrameReader;
+import io.netty.handler.codec.http2.DefaultHttp2FrameWriter;
 import io.netty.handler.codec.http2.Http2Connection;
+import io.netty.handler.codec.http2.Http2ConnectionDecoder;
+import io.netty.handler.codec.http2.Http2ConnectionEncoder;
 import io.netty.handler.codec.http2.Http2Error;
 import io.netty.handler.codec.http2.Http2Exception;
+import io.netty.handler.codec.http2.Http2FrameWriter;
+import io.netty.handler.codec.http2.Http2Settings;
 import org.junit.Test;
 
 public class GrpcNettyMaxConcurrentStreamsLimiterTest {
 
-  @Test
-  public void shouldEnforceMaxConcurrentStreamsBeforeInstallingGrpcHandler() throws Exception {
-    InternalProtocolNegotiator.ProtocolNegotiator delegate =
-        mock(InternalProtocolNegotiator.ProtocolNegotiator.class);
-    GrpcHttp2ConnectionHandler grpcHandler = mock(GrpcHttp2ConnectionHandler.class);
-    ChannelHandler channelHandler = mock(ChannelHandler.class);
-    Http2Connection connection = new DefaultHttp2Connection(true);
-    when(grpcHandler.connection()).thenReturn(connection);
-    when(delegate.newHandler(grpcHandler)).thenReturn(channelHandler);
-
-    GrpcNettyMaxConcurrentStreamsLimiter.EnforcingProtocolNegotiator negotiator =
-        new GrpcNettyMaxConcurrentStreamsLimiter.EnforcingProtocolNegotiator(delegate, 2);
-
-    assertSame(channelHandler, negotiator.newHandler(grpcHandler));
-    assertEquals(2, connection.remote().maxActiveStreams());
-    verify(delegate).newHandler(grpcHandler);
-
-    connection.remote().createStream(1, false);
-    connection.remote().createStream(3, false);
-    try {
-      connection.remote().createStream(5, false);
-      fail("Third concurrent stream should be refused");
-    } catch (Http2Exception e) {
-      assertEquals(Http2Error.REFUSED_STREAM, e.error());
+  private static final ChannelLogger NOOP_LOGGER = new ChannelLogger() {
+    @Override
+    public void log(ChannelLogLevel level, String message) {
     }
+
+    @Override
+    public void log(ChannelLogLevel level, String messageFormat, Object... args) {
+    }
+  };
+
+  @Test
+  public void shouldEnforceMaxStreamsBeforeSettingsAck() throws Exception {
+    Http2Connection connection = new DefaultHttp2Connection(true);
+    GrpcHttp2ConnectionHandler grpcHandler = newGrpcHandler(connection);
+    InternalProtocolNegotiator.ProtocolNegotiator negotiator =
+        GrpcNettyMaxConcurrentStreamsLimiter.newPlaintextNegotiator(2);
+
+    ChannelHandler negotiationHandler = negotiator.newHandler(grpcHandler);
+
+    assertNotNull(negotiationHandler);
+    assertEquals(2, connection.remote().maxActiveStreams());
+    connection.remote().createStream(1, true);
+    connection.remote().createStream(3, true);
+    Http2Exception exception = assertThrows(
+        Http2Exception.class, () -> connection.remote().createStream(5, true));
+    assertEquals(Http2Error.REFUSED_STREAM, exception.error());
+    negotiator.close();
+  }
+
+  @Test
+  public void shouldIgnoreClientMaxHeaderListSizeOnServer() throws Exception {
+    Http2Connection connection = new DefaultHttp2Connection(true);
+    Http2FrameWriter frameWriter = new DefaultHttp2FrameWriter();
+    Http2ConnectionEncoder encoder =
+        new DefaultHttp2ConnectionEncoder(connection, frameWriter);
+    long originalMaxHeaderListSize =
+        encoder.configuration().headersConfiguration().maxHeaderListSize();
+
+    encoder.remoteSettings(new Http2Settings().maxHeaderListSize(1));
+
+    assertEquals(originalMaxHeaderListSize,
+        encoder.configuration().headersConfiguration().maxHeaderListSize());
+    encoder.close();
+  }
+
+  @Test
+  public void shouldRejectNonPositiveStreamLimit() {
+    assertThrows(IllegalArgumentException.class,
+        () -> GrpcNettyMaxConcurrentStreamsLimiter.newPlaintextNegotiator(0));
+    assertThrows(IllegalArgumentException.class,
+        () -> GrpcNettyMaxConcurrentStreamsLimiter.newPlaintextNegotiator(-1));
+  }
+
+  private static GrpcHttp2ConnectionHandler newGrpcHandler(Http2Connection connection) {
+    Http2FrameWriter frameWriter = new DefaultHttp2FrameWriter();
+    Http2ConnectionEncoder encoder =
+        new DefaultHttp2ConnectionEncoder(connection, frameWriter);
+    Http2ConnectionDecoder decoder = new DefaultHttp2ConnectionDecoder(
+        connection, encoder, new DefaultHttp2FrameReader());
+    return new GrpcHttp2ConnectionHandler(
+        null, decoder, encoder, new Http2Settings(), NOOP_LOGGER) {
+    };
   }
 }

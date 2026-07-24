@@ -102,7 +102,8 @@ public class NodeConfigTest {
     NodeConfig.RpcConfig rpc = nc.getRpc();
 
     // reference.conf provides actual final defaults, no sentinel conversion needed
-    assertEquals(100, rpc.getMaxConcurrentCallsPerConnection());
+    assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION,
+        rpc.getMaxConcurrentCallsPerConnection());
     assertEquals(1048576, rpc.getFlowControlWindow());
     assertEquals(9223372036854775807L, rpc.getMaxConnectionIdleInMillis());
     assertEquals(9223372036854775807L, rpc.getMaxConnectionAgeInMillis());
@@ -127,7 +128,8 @@ public class NodeConfigTest {
     Config config = withRef(
         "node { rpc { maxConcurrentCallsPerConnection = 0 } }");
     NodeConfig nc = NodeConfig.fromConfig(config);
-    assertEquals(100, nc.getRpc().getMaxConcurrentCallsPerConnection());
+    assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION,
+        nc.getRpc().getMaxConcurrentCallsPerConnection());
   }
 
   @Test
