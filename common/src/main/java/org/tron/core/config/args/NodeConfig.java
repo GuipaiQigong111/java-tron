@@ -359,7 +359,7 @@ public class NodeConfig {
     }
 
     if (rpc.maxConcurrentCallsPerConnection == 0) {
-      rpc.maxConcurrentCallsPerConnection = Integer.MAX_VALUE;
+      rpc.maxConcurrentCallsPerConnection = 100;
     }
     if (rpc.maxConnectionIdleInMillis == 0) {
       rpc.maxConnectionIdleInMillis = Long.MAX_VALUE;

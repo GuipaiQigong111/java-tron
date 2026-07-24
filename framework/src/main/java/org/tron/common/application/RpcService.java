@@ -107,6 +107,8 @@ public abstract class RpcService extends AbstractService {
         .maxConnectionAge(parameter.getMaxConnectionAgeInMillis(), TimeUnit.MILLISECONDS)
         .maxInboundMessageSize(parameter.getMaxMessageSize())
         .maxHeaderListSize(parameter.getMaxHeaderListSize());
+    GrpcNettyMaxConcurrentStreamsLimiter.configure(
+        serverBuilder, parameter.getMaxConcurrentCallsPerConnection());
     if (parameter.getRpcMaxRstStream() > 0 && parameter.getRpcSecondsPerWindow() > 0) {
       serverBuilder.maxRstFramesPerWindow(
           parameter.getRpcMaxRstStream(), parameter.getRpcSecondsPerWindow());
