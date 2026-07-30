@@ -58,7 +58,6 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.StringUtil;
 import org.tron.core.Constant;
-import org.tron.json.JSON;
 import org.tron.protos.contract.BalanceContract;
 
 /**
@@ -866,14 +865,10 @@ public class JsonFormat {
     }
     //Normal String
     if (HttpSelfFormatFieldName.isNameStringFormat(fliedName)) {
-      String result = new String(input.toByteArray());
-      result = result.replaceAll("\"", "\\\\\"");
-      try {
-        JSON.parseObject("{\"key\":\"" + result + "\"}");
-        return result;
-      } catch (Exception e) {
+      if (!input.isValidUtf8()) {
         return ByteArray.toHexString(input.toByteArray());
       }
+      return escapeText(input.toStringUtf8());
     }
     //HEX
     return ByteArray.toHexString(input.toByteArray());

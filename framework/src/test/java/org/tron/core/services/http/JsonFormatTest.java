@@ -6,23 +6,25 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
-
 import java.io.CharArrayReader;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-
 import org.junit.After;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.tron.core.Constant;
 import org.tron.protos.Protocol;
+import org.tron.protos.contract.AccountContract.AccountUpdateContract;
 import org.tron.protos.contract.ProposalContract.ProposalCreateContract;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract.ABI.Entry;
+import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 
 public class JsonFormatTest {
   @After
@@ -132,6 +134,42 @@ public class JsonFormatTest {
     String input1 = "\b\f\n\r\t\\\"\\b\\f\\n\\r\\t\\\\\"test123";
     String out = (String)privateMethod.invoke(null, input1);
     assertNotNull(out);
+  }
+
+  @Test
+  public void testSelfTypeEscapesNameAndUrlBytesAsStrictJson() throws IOException {
+    String value = "line1\nline2\r\t\b\f\u0000tail";
+    ObjectMapper strictMapper = new ObjectMapper();
+
+    AccountUpdateContract accountUpdate = AccountUpdateContract.newBuilder()
+        .setAccountName(ByteString.copyFromUtf8(value))
+        .build();
+    JsonNode accountJson = strictMapper.readTree(JsonFormat.printToString(accountUpdate, true));
+    assertEquals(value, accountJson.get("account_name").textValue());
+
+    WitnessCreateContract witnessCreate = WitnessCreateContract.newBuilder()
+        .setUrl(ByteString.copyFromUtf8(value))
+        .build();
+    JsonNode witnessJson = strictMapper.readTree(JsonFormat.printToString(witnessCreate, true));
+    assertEquals(value, witnessJson.get("url").textValue());
+  }
+
+  @Test
+  public void testSelfTypeEscapesBackslashAndQuote() throws IOException {
+    String value = "slash\\quote\"tail";
+    String escaped = JsonFormat.escapeBytesSelfType(
+        ByteString.copyFromUtf8(value), "protocol.AccountUpdateContract.account_name");
+    JsonNode json = new ObjectMapper().readTree("{\"value\":\"" + escaped + "\"}");
+
+    assertEquals(value, json.get("value").textValue());
+  }
+
+  @Test
+  public void testSelfTypeNameFallsBackToHexForInvalidUtf8() {
+    ByteString invalidUtf8 = ByteString.copyFrom(new byte[]{(byte) 0xc3, 0x28});
+
+    assertEquals("c328", JsonFormat.escapeBytesSelfType(
+        invalidUtf8, "protocol.AccountUpdateContract.account_name"));
   }
 
   @Test
