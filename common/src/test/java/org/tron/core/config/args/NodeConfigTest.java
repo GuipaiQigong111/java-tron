@@ -106,6 +106,9 @@ public class NodeConfigTest {
     // reference.conf provides actual final defaults, no sentinel conversion needed
     assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION,
         rpc.getMaxConcurrentCallsPerConnection());
+    assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONNECTIONS, rpc.getMaxConnections());
+    assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONNECTIONS_PER_IP,
+        rpc.getMaxConnectionsPerIp());
     assertEquals(1048576, rpc.getFlowControlWindow());
     assertEquals(9223372036854775807L, rpc.getMaxConnectionIdleInMillis());
     assertEquals(9223372036854775807L, rpc.getMaxConnectionAgeInMillis());
@@ -147,10 +150,48 @@ public class NodeConfigTest {
   }
 
   @Test
+  public void testRpcZeroConnectionLimitsUseSecureDefaults() {
+    Config config = withRef(
+        "node { rpc { maxConnections = 0, maxConnectionsPerIp = 0 } }");
+    NodeConfig.RpcConfig rpc = NodeConfig.fromConfig(config).getRpc();
+
+    assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONNECTIONS, rpc.getMaxConnections());
+    assertEquals(NodeConfig.RpcConfig.DEFAULT_MAX_CONNECTIONS_PER_IP,
+        rpc.getMaxConnectionsPerIp());
+  }
+
+  @Test
+  public void testRpcNegativeConnectionLimitsRejected() {
+    TronError maxConnectionsException = assertThrows(TronError.class,
+        () -> NodeConfig.fromConfig(withRef("node.rpc.maxConnections = -1")));
+    assertTrue(maxConnectionsException.getMessage().contains(
+        "node.rpc.maxConnections must be non-negative, got: -1"));
+
+    TronError perIpException = assertThrows(TronError.class,
+        () -> NodeConfig.fromConfig(withRef("node.rpc.maxConnectionsPerIp = -1")));
+    assertTrue(perIpException.getMessage().contains(
+        "node.rpc.maxConnectionsPerIp must be non-negative, got: -1"));
+  }
+
+  @Test
+  public void testRpcPerIpConnectionLimitCannotExceedGlobalLimit() {
+    Config config = withRef(
+        "node { rpc { maxConnections = 10, maxConnectionsPerIp = 11 } }");
+
+    TronError exception = assertThrows(TronError.class,
+        () -> NodeConfig.fromConfig(config));
+
+    assertTrue(exception.getMessage().contains(
+        "node.rpc.maxConnectionsPerIp must not exceed node.rpc.maxConnections, got: 11 > 10"));
+  }
+
+  @Test
   public void testRpcUserOverrideExplicitValues() {
     Config config = withRef(
         "node { rpc { thread = 32,"
             + " maxConcurrentCallsPerConnection = 50,"
+            + " maxConnections = 256,"
+            + " maxConnectionsPerIp = 16,"
             + " flowControlWindow = 2097152,"
             + " maxMessageSize = 8388608,"
             + " maxHeaderListSize = 16384 } }");
@@ -158,6 +199,8 @@ public class NodeConfigTest {
     NodeConfig.RpcConfig rpc = nc.getRpc();
     assertEquals(32, rpc.getThread());
     assertEquals(50, rpc.getMaxConcurrentCallsPerConnection());
+    assertEquals(256, rpc.getMaxConnections());
+    assertEquals(16, rpc.getMaxConnectionsPerIp());
     assertEquals(2097152, rpc.getFlowControlWindow());
     assertEquals(8388608, rpc.getMaxMessageSize());
     assertEquals(16384, rpc.getMaxHeaderListSize());

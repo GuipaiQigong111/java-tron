@@ -34,6 +34,8 @@ import org.tron.core.services.ratelimiter.RpcApiAccessInterceptor;
 @Slf4j(topic = "rpc")
 public abstract class RpcService extends AbstractService {
 
+  private static final GrpcConnectionLimiter CONNECTION_LIMITER = new GrpcConnectionLimiter();
+
   private Server apiServer;
   private ExecutorService executorService;
   protected String executorName;
@@ -101,7 +103,11 @@ public abstract class RpcService extends AbstractService {
     }
     // Set configs from config.conf or default value
     serverBuilder = GrpcNettyMaxConcurrentStreamsLimiter.configurePlaintext(
-        serverBuilder, parameter.getMaxConcurrentCallsPerConnection());
+        serverBuilder,
+        parameter.getMaxConcurrentCallsPerConnection(),
+        connectionLimiter(),
+        parameter.getRpcMaxConnections(),
+        parameter.getRpcMaxConnectionsPerIp());
     serverBuilder
         .flowControlWindow(parameter.getFlowControlWindow())
         .maxConnectionIdle(parameter.getMaxConnectionIdleInMillis(), TimeUnit.MILLISECONDS)
@@ -117,6 +123,10 @@ public abstract class RpcService extends AbstractService {
       serverBuilder.addService(ProtoReflectionService.newInstance());
     }
     return serverBuilder;
+  }
+
+  GrpcConnectionLimiter connectionLimiter() {
+    return CONNECTION_LIMITER;
   }
 
   protected abstract void addService(NettyServerBuilder serverBuilder);

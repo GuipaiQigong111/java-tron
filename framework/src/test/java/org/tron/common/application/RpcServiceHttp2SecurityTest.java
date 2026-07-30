@@ -42,6 +42,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
@@ -69,6 +70,8 @@ public class RpcServiceHttp2SecurityTest {
   private CommonParameter parameter;
   private int previousRpcThreadNum;
   private int previousMaxConcurrentCalls;
+  private int previousMaxConnections;
+  private int previousMaxConnectionsPerIp;
   private int previousFlowControlWindow;
   private long previousMaxConnectionIdle;
   private long previousMaxConnectionAge;
@@ -83,6 +86,8 @@ public class RpcServiceHttp2SecurityTest {
     parameter = Args.getInstance();
     previousRpcThreadNum = parameter.getRpcThreadNum();
     previousMaxConcurrentCalls = parameter.getMaxConcurrentCallsPerConnection();
+    previousMaxConnections = parameter.getRpcMaxConnections();
+    previousMaxConnectionsPerIp = parameter.getRpcMaxConnectionsPerIp();
     previousFlowControlWindow = parameter.getFlowControlWindow();
     previousMaxConnectionIdle = parameter.getMaxConnectionIdleInMillis();
     previousMaxConnectionAge = parameter.getMaxConnectionAgeInMillis();
@@ -94,6 +99,8 @@ public class RpcServiceHttp2SecurityTest {
 
     parameter.setRpcThreadNum(0);
     parameter.setMaxConcurrentCallsPerConnection(2);
+    parameter.setRpcMaxConnections(512);
+    parameter.setRpcMaxConnectionsPerIp(32);
     parameter.setFlowControlWindow(NettyServerBuilder.DEFAULT_FLOW_CONTROL_WINDOW);
     parameter.setMaxConnectionIdleInMillis(60_000);
     parameter.setMaxConnectionAgeInMillis(Long.MAX_VALUE);
@@ -108,6 +115,8 @@ public class RpcServiceHttp2SecurityTest {
   public void tearDown() {
     parameter.setRpcThreadNum(previousRpcThreadNum);
     parameter.setMaxConcurrentCallsPerConnection(previousMaxConcurrentCalls);
+    parameter.setRpcMaxConnections(previousMaxConnections);
+    parameter.setRpcMaxConnectionsPerIp(previousMaxConnectionsPerIp);
     parameter.setFlowControlWindow(previousFlowControlWindow);
     parameter.setMaxConnectionIdleInMillis(previousMaxConnectionIdle);
     parameter.setMaxConnectionAgeInMillis(previousMaxConnectionAge);
@@ -141,6 +150,121 @@ public class RpcServiceHttp2SecurityTest {
       server.shutdownNow();
       assertTrue(server.awaitTermination(5, TimeUnit.SECONDS));
     }
+  }
+
+  @Test
+  public void shouldRejectExcessConnectionsAndReleasePermitAfterClose() throws Exception {
+    parameter.setRpcMaxConnections(2);
+    parameter.setRpcMaxConnectionsPerIp(1);
+    TestRpcService rpcService = new TestRpcService();
+    Server server = rpcService.newServerBuilder()
+        .addService(newHoldService())
+        .build()
+        .start();
+
+    try {
+      try (Socket first = openHttp2Connection(server.getPort())) {
+        awaitActiveConnections(rpcService.connectionLimiter, 1);
+        try (Socket rejected = new Socket("127.0.0.1", server.getPort())) {
+          rejected.setSoTimeout(5_000);
+          assertConnectionClosed(rejected);
+        }
+        assertEquals(1, rpcService.connectionLimiter.activeConnections());
+      }
+
+      awaitActiveConnections(rpcService.connectionLimiter, 0);
+      try (Socket replacement = openHttp2Connection(server.getPort())) {
+        awaitActiveConnections(rpcService.connectionLimiter, 1);
+      }
+      awaitActiveConnections(rpcService.connectionLimiter, 0);
+    } finally {
+      server.shutdownNow();
+      assertTrue(server.awaitTermination(5, TimeUnit.SECONDS));
+    }
+  }
+
+  @Test
+  public void shouldShareConnectionLimitAcrossRpcServers() throws Exception {
+    parameter.setRpcMaxConnections(1);
+    parameter.setRpcMaxConnectionsPerIp(1);
+    GrpcConnectionLimiter sharedLimiter = new GrpcConnectionLimiter();
+    TestRpcService firstRpcService = new TestRpcService(sharedLimiter);
+    TestRpcService secondRpcService = new TestRpcService(sharedLimiter);
+    Server firstServer = firstRpcService.newServerBuilder()
+        .addService(newHoldService())
+        .build()
+        .start();
+    Server secondServer = secondRpcService.newServerBuilder()
+        .addService(newHoldService())
+        .build()
+        .start();
+
+    try {
+      try (Socket first = openHttp2Connection(firstServer.getPort())) {
+        awaitActiveConnections(sharedLimiter, 1);
+        try (Socket rejected = new Socket("127.0.0.1", secondServer.getPort())) {
+          rejected.setSoTimeout(5_000);
+          assertConnectionClosed(rejected);
+        }
+      }
+
+      awaitActiveConnections(sharedLimiter, 0);
+      try (Socket replacement = openHttp2Connection(secondServer.getPort())) {
+        awaitActiveConnections(sharedLimiter, 1);
+      }
+      awaitActiveConnections(sharedLimiter, 0);
+    } finally {
+      firstServer.shutdownNow();
+      secondServer.shutdownNow();
+      assertTrue(firstServer.awaitTermination(5, TimeUnit.SECONDS));
+      assertTrue(secondServer.awaitTermination(5, TimeUnit.SECONDS));
+    }
+  }
+
+  private static Socket openHttp2Connection(int port) throws IOException {
+    Socket socket = new Socket("127.0.0.1", port);
+    try {
+      socket.setSoTimeout(5_000);
+      OutputStream output = socket.getOutputStream();
+      output.write(CLIENT_PREFACE);
+      output.write(EMPTY_SETTINGS_FRAME);
+      output.flush();
+      assertServerSettings(socket.getInputStream());
+      return socket;
+    } catch (IOException | RuntimeException | Error e) {
+      socket.close();
+      throw e;
+    }
+  }
+
+  private static void assertServerSettings(InputStream input) throws IOException {
+    for (int i = 0; i < 10; i++) {
+      Http2Frame frame = readFrame(input);
+      if (frame.type == SETTINGS_FRAME_TYPE && frame.streamId == 0) {
+        return;
+      }
+    }
+    fail("Server did not send HTTP/2 SETTINGS");
+  }
+
+  private static void assertConnectionClosed(Socket socket) throws IOException {
+    try {
+      assertEquals(-1, socket.getInputStream().read());
+    } catch (SocketException expected) {
+      // A TCP reset is also a valid immediate rejection.
+    }
+  }
+
+  private static void awaitActiveConnections(
+      GrpcConnectionLimiter limiter, int expectedConnections) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      if (limiter.activeConnections() == expectedConnections) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    assertEquals(expectedConnections, limiter.activeConnections());
   }
 
   private static ServerServiceDefinition newHoldService() {
@@ -268,12 +392,24 @@ public class RpcServiceHttp2SecurityTest {
 
   private static final class TestRpcService extends RpcService {
 
+    private final GrpcConnectionLimiter connectionLimiter;
+
     private TestRpcService() {
+      this(new GrpcConnectionLimiter());
+    }
+
+    private TestRpcService(GrpcConnectionLimiter connectionLimiter) {
+      this.connectionLimiter = connectionLimiter;
       port = 0;
     }
 
     private NettyServerBuilder newServerBuilder() {
       return initServerBuilder();
+    }
+
+    @Override
+    GrpcConnectionLimiter connectionLimiter() {
+      return connectionLimiter;
     }
 
     @Override

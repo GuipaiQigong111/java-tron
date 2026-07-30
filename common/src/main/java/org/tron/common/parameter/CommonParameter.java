@@ -215,6 +215,12 @@ public class CommonParameter {
   public int maxConcurrentCallsPerConnection;
   @Getter
   @Setter
+  public int rpcMaxConnections;
+  @Getter
+  @Setter
+  public int rpcMaxConnectionsPerIp;
+  @Getter
+  @Setter
   public int flowControlWindow;
   @Getter
   @Setter

@@ -523,6 +523,8 @@ public class Args extends CommonParameter {
     PARAMETER.rpcOnPBFTPort = rpc.getPBFTPort();
     PARAMETER.rpcThreadNum = rpc.getThread();
     PARAMETER.maxConcurrentCallsPerConnection = rpc.getMaxConcurrentCallsPerConnection();
+    PARAMETER.rpcMaxConnections = rpc.getMaxConnections();
+    PARAMETER.rpcMaxConnectionsPerIp = rpc.getMaxConnectionsPerIp();
     PARAMETER.flowControlWindow = rpc.getFlowControlWindow();
     PARAMETER.rpcMaxRstStream = rpc.getMaxRstStream();
     PARAMETER.rpcSecondsPerWindow = rpc.getSecondsPerWindow();
@@ -1315,4 +1317,3 @@ public class Args extends CommonParameter {
     return optionGroupMap;
   }
 }
-

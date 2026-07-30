@@ -58,6 +58,14 @@ node {
     # default 100. Setting 0 also uses the secure default.
     # maxConcurrentCallsPerConnection = 100
 
+    # Maximum active incoming gRPC connections shared by all gRPC API ports,
+    # default 512. Setting 0 also uses the secure default.
+    # maxConnections = 512
+
+    # Maximum active incoming gRPC connections from one remote IP address,
+    # default 32. Setting 0 also uses the secure default.
+    # maxConnectionsPerIp = 32
+
     # The HTTP/2 flow control window, default 1MB
     # flowControlWindow =
 
@@ -79,6 +87,10 @@ node {
 > **Upgrade note:** `maxConcurrentCallsPerConnection = 0` previously disabled the limit.
 > It now selects the secure default of 100. Configure an explicit positive value if a node
 > requires more than 100 concurrent calls on one connection.
+
+`maxConnections` is shared by the FullNode, Solidity, and PBFT gRPC ports. When a proxy is placed
+in front of java-tron, `maxConnectionsPerIp` observes the proxy's source address; enforce the
+client-IP limit at the proxy or preserve the original source address.
 
 ## backup
 You can customize backup options in the `node.backup` part of `config.conf`, which looks like:

@@ -106,6 +106,10 @@ node {
     solidityPort = 50061
     # Maximum concurrent calls per connection. 0 uses the secure default of 100.
     maxConcurrentCallsPerConnection = 100
+    # Maximum active connections shared by all gRPC ports. 0 uses the secure default of 512.
+    maxConnections = 512
+    # Maximum active connections per remote IP. 0 uses the secure default of 32.
+    maxConnectionsPerIp = 32
     # Idle connection timeout (ms). 0 = no limit.
     maxConnectionIdleInMillis = 0
     # Minimum active connections required before broadcasting transactions.
@@ -117,6 +121,10 @@ node {
 > **Upgrade note:** `node.rpc.maxConcurrentCallsPerConnection = 0` previously meant no limit.
 > It now selects the secure default of 100. Configure an explicit positive value if a client
 > needs more than 100 concurrent calls on one connection.
+
+The gRPC connection limits are enforced before HTTP/2 request processing. `maxConnections` is
+shared by all java-tron gRPC ports. If a reverse proxy hides client source addresses, configure
+the per-client connection limit at the proxy instead.
 
 To disable an API endpoint that you do not want to expose publicly, set its `Enable` flag to `false` or add endpoints to `node.disabledApi`:
 

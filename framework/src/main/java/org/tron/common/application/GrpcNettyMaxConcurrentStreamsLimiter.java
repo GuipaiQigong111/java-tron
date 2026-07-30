@@ -25,26 +25,42 @@ import io.grpc.netty.NettyServerBuilder;
 import io.netty.channel.ChannelHandler;
 import io.netty.util.AsciiString;
 
-/** Enforces the advertised HTTP/2 concurrent stream limit for grpc-netty servers. */
+/** Configures stream enforcement and connection admission for grpc-netty servers. */
 final class GrpcNettyMaxConcurrentStreamsLimiter {
 
   private GrpcNettyMaxConcurrentStreamsLimiter() {
   }
 
   static NettyServerBuilder configurePlaintext(
-      NettyServerBuilder builder, int maxConcurrentStreams) {
+      NettyServerBuilder builder,
+      int maxConcurrentStreams,
+      GrpcConnectionLimiter connectionLimiter,
+      int maxConnections,
+      int maxConnectionsPerIp) {
     checkNotNull(builder, "builder");
+    checkNotNull(connectionLimiter, "connectionLimiter");
     checkArgument(maxConcurrentStreams > 0, "maxConcurrentStreams must be positive");
     builder.maxConcurrentCallsPerConnection(maxConcurrentStreams);
     // TODO: Remove this shim after https://github.com/grpc/grpc-java/issues/12930 is fixed.
-    return builder.protocolNegotiator(newPlaintextNegotiator(maxConcurrentStreams));
+    return builder.protocolNegotiator(newPlaintextNegotiator(
+        maxConcurrentStreams, connectionLimiter, maxConnections, maxConnectionsPerIp));
   }
 
   static InternalProtocolNegotiator.ProtocolNegotiator newPlaintextNegotiator(
       int maxConcurrentStreams) {
+    return newPlaintextNegotiator(
+        maxConcurrentStreams, new GrpcConnectionLimiter(), Integer.MAX_VALUE, Integer.MAX_VALUE);
+  }
+
+  static InternalProtocolNegotiator.ProtocolNegotiator newPlaintextNegotiator(
+      int maxConcurrentStreams,
+      GrpcConnectionLimiter connectionLimiter,
+      int maxConnections,
+      int maxConnectionsPerIp) {
     checkArgument(maxConcurrentStreams > 0, "maxConcurrentStreams must be positive");
     return new EnforcingProtocolNegotiator(
-        InternalProtocolNegotiators.serverPlaintext(), maxConcurrentStreams);
+        InternalProtocolNegotiators.serverPlaintext(), maxConcurrentStreams,
+        connectionLimiter, maxConnections, maxConnectionsPerIp);
   }
 
   private static final class EnforcingProtocolNegotiator
@@ -52,11 +68,21 @@ final class GrpcNettyMaxConcurrentStreamsLimiter {
 
     private final InternalProtocolNegotiator.ProtocolNegotiator delegate;
     private final int maxConcurrentStreams;
+    private final GrpcConnectionLimiter connectionLimiter;
+    private final int maxConnections;
+    private final int maxConnectionsPerIp;
 
     private EnforcingProtocolNegotiator(
-        InternalProtocolNegotiator.ProtocolNegotiator delegate, int maxConcurrentStreams) {
+        InternalProtocolNegotiator.ProtocolNegotiator delegate,
+        int maxConcurrentStreams,
+        GrpcConnectionLimiter connectionLimiter,
+        int maxConnections,
+        int maxConnectionsPerIp) {
       this.delegate = checkNotNull(delegate, "delegate");
       this.maxConcurrentStreams = maxConcurrentStreams;
+      this.connectionLimiter = checkNotNull(connectionLimiter, "connectionLimiter");
+      this.maxConnections = maxConnections;
+      this.maxConnectionsPerIp = maxConnectionsPerIp;
     }
 
     @Override
@@ -68,7 +94,8 @@ final class GrpcNettyMaxConcurrentStreamsLimiter {
     public ChannelHandler newHandler(GrpcHttp2ConnectionHandler grpcHandler) {
       // grpc-java builds the connection directly, bypassing Netty's builder-side enforcement.
       grpcHandler.connection().remote().maxActiveStreams(maxConcurrentStreams);
-      return delegate.newHandler(grpcHandler);
+      return connectionLimiter.newHandler(
+          delegate.newHandler(grpcHandler), maxConnections, maxConnectionsPerIp);
     }
 
     @Override

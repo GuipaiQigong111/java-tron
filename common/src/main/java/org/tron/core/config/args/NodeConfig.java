@@ -208,6 +208,8 @@ public class NodeConfig {
   public static class RpcConfig {
 
     public static final int DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION = 100;
+    public static final int DEFAULT_MAX_CONNECTIONS = 512;
+    public static final int DEFAULT_MAX_CONNECTIONS_PER_IP = 32;
 
     private boolean enable = true;
     private int port = 50051;
@@ -219,6 +221,8 @@ public class NodeConfig {
     private int thread = 0;
     private int maxConcurrentCallsPerConnection =
         DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION;
+    private int maxConnections = DEFAULT_MAX_CONNECTIONS;
+    private int maxConnectionsPerIp = DEFAULT_MAX_CONNECTIONS_PER_IP;
     private int flowControlWindow = 1048576;
     private long maxConnectionIdleInMillis = 0;
     private long maxConnectionAgeInMillis = 0;
@@ -372,6 +376,28 @@ public class NodeConfig {
           RpcConfig.DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION);
       rpc.maxConcurrentCallsPerConnection =
           RpcConfig.DEFAULT_MAX_CONCURRENT_CALLS_PER_CONNECTION;
+    }
+    if (rpc.maxConnections < 0) {
+      throw new TronError("node.rpc.maxConnections must be non-negative, got: "
+          + rpc.maxConnections, PARAMETER_INIT);
+    }
+    if (rpc.maxConnections == 0) {
+      logger.warn("Configuring [node.rpc.maxConnections] as 0 uses the secure default of {}.",
+          RpcConfig.DEFAULT_MAX_CONNECTIONS);
+      rpc.maxConnections = RpcConfig.DEFAULT_MAX_CONNECTIONS;
+    }
+    if (rpc.maxConnectionsPerIp < 0) {
+      throw new TronError("node.rpc.maxConnectionsPerIp must be non-negative, got: "
+          + rpc.maxConnectionsPerIp, PARAMETER_INIT);
+    }
+    if (rpc.maxConnectionsPerIp == 0) {
+      logger.warn("Configuring [node.rpc.maxConnectionsPerIp] as 0 uses the secure default of {}.",
+          RpcConfig.DEFAULT_MAX_CONNECTIONS_PER_IP);
+      rpc.maxConnectionsPerIp = RpcConfig.DEFAULT_MAX_CONNECTIONS_PER_IP;
+    }
+    if (rpc.maxConnectionsPerIp > rpc.maxConnections) {
+      throw new TronError("node.rpc.maxConnectionsPerIp must not exceed node.rpc.maxConnections, "
+          + "got: " + rpc.maxConnectionsPerIp + " > " + rpc.maxConnections, PARAMETER_INIT);
     }
     if (rpc.maxConnectionIdleInMillis == 0) {
       rpc.maxConnectionIdleInMillis = Long.MAX_VALUE;
